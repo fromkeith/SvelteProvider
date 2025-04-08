@@ -7,10 +7,10 @@ import {
     type Subscriber,
     type Unsubscriber
 } from 'svelte/store';
-import { dev } from '$app/environment';
+import 'esm-env';
 
 
-const log = dev ? console.log : () => {};
+const log = import.meta.env.DEV ? console.log : () => {};
 
 
 export abstract class Provider<T, Args extends any[] = []> implements Readable<T> {

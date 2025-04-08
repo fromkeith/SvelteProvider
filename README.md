@@ -127,3 +127,9 @@ public logout() {
     this.setState(Promise.resolve(null));
 }
 ```
+
+
+# Todo/Unknowns
+
+[] No server side testing done
+[] Allow pods to be self deleted when no one listening

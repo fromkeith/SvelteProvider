@@ -27,6 +27,7 @@
 			"svelte": "./dist/index.js"
 		}
 	},
+	"license": "MIT",
 	"peerDependencies": {
 		"svelte": "^5.0.0"
 	},
@@ -42,6 +43,7 @@
 		"vite": "^6.2.5"
 	},
 	"keywords": [
-		"svelte"
+		"svelte",
+		"riverpod"
 	]
 }
