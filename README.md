@@ -1,58 +1,129 @@
-# Svelte library
+# SvelteProvider
 
-Everything you need to build a Svelte library, powered by [`sv`](https://npmjs.com/package/sv).
+> A [Riverpod](https://riverpod.dev/docs/introduction/why_riverpod) (from flutter) inspired wrapper around stores
 
-Read more about creating a library [in the docs](https://svelte.dev/docs/kit/packaging).
 
-## Creating a project
+# Usage
 
-If you're seeing this, you've probably already done this step. Congrats!
+Create a provider by extending the provider class
 
-```bash
-# create a new project in the current directory
-npx sv create
-
-# create a new project in my-app
-npx sv create my-app
+```
+class AccountProvider extends Provider<IAccountAccount> {
+    constructor() {
+        // this is our default value before build is called
+        super(null);
+    }
+    // this is how we pull the data
+    protected async build(): Promise<IAccountAccount> {
+        const resp = await fetch(`${PUBLIC_API_DOMAIN}/v1/account/?prefs=yes`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+        });
+        const account: IAccountAccount = await resp.json();
+        return account;
+    }
+}
+// this is a singleton of our provider that can be used by anyone
+export const accountProvider = AccountProvider.create();
 ```
 
-## Developing
+Then to use the provider
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+```
+import {accountProvider} from '$lib/stores';
+// you now have a Svelte store!
+// any udpates to the provider will update the store too
+$: account = accountProvider();
 
-```bash
-npm run dev
+// we can check loading state
+$: isLoading = account.isLoading
+// await a promise for first load
+await account.promise
+// or just get current value
+get(account)
+// we can get any errors as a store as well
+$: error = account.error
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+
+
+// or in the UI as
+{#if !$isLoading}
+    {$account}
+{/if}
+{#if $error}
+    {$error}
+{/if}
+{#await account.promise}
+{/if}
 ```
 
-Everything inside `src/lib` is part of your library, everything inside `src/routes` can be used as a showcase or preview app.
+# Depending on anther Provider
 
-## Building
+You might want to make 1 provider manipulate the results of another.
+This can be done, and have it react to changes in the parent.
 
-To build your library:
-
-```bash
-npm run package
+```
+class AccountIsOldPlanProvider extends Provider<boolean> {
+    // if using minification, you need to set `providerName`
+    public static providerName: string = 'AccountIsOldPlanProvider';
+    constructor() {
+        super(false, accountProvider());
+    }
+    protected async build(account: IAccountAccount): Promise<boolean> {
+        if ((account.plan?.products?.length ?? 0) > 0) {
+            return true
+        }
+        return false;
+    }
+}
 ```
 
-To create a production version of your showcase app:
+# Lazy load
 
-```bash
-npm run build
+Everything is lazy loaded, taking advantage of Svelte Stores
+first subscriber functionality.
+
+# Parameterized loading
+
+We can have loaders with parameterized initialization.
+Here we take two parameters, one of type string, the other number.
+
+```
+class AccountIsOldPlanProvider extends Provider<boolean, [string, number]> {
+    constructor(hello: string, world: number) {
+        // we can now access hello + world!
+        super(false, accountProvider());
+    }
+    protected async build(account: IAccountAccount): Promise<boolean> {
+        if ((account.plan?.products?.length ?? 0) > 0) {
+            return true
+        }
+        return false;
+    }
+}
+const accountIsOldPlanProvider = AccountIsOldPlanProvider.create();
 ```
 
-You can preview the production build with `npm run preview`.
+Usage of that
+```
+import {accountIsOldPlanProvider} from '$lib/stores';
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+$: accountIsOld = accountIsOldPlanProvider("this", 123);
+```
 
-## Publishing
+## Side effects
 
-Go into the `package.json` and give your package the desired name through the `"name"` option. Also consider adding a `"license"` field and point it to a `LICENSE` file which you can create from a template (one popular option is the [MIT license](https://opensource.org/license/mit/)).
+Add in member functions
+```
+// either call "invalidateSelf" to trigger a refresh
+public setAuth(token: string): Promise<IAuthPayload | null> {
+    self.localStorage.authToken = token;
+    return this.invalidateSelf();
+}
 
-To publish your library to [npm](https://www.npmjs.com):
-
-```bash
-npm publish
+// or call "setState" to set a promise directyl
+public logout() {
+    self.localStorage.removeItem('authToken');
+    this.setState(Promise.resolve(null));
+}
 ```
