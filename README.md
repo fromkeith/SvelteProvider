@@ -131,5 +131,7 @@ public logout() {
 
 # Todo/Unknowns
 
-[] No server side testing done
-[] Allow pods to be self deleted when no one listening
+- [ ] No server side testing done
+- [ ] Allow pods to be self deleted when no one listening
+- [ ] Add examples
+- [ ] Allow graceful error handling, so if a parent fails, the child can catch it
