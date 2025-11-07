@@ -1,6 +1,5 @@
-import { writable, get } from 'svelte/store';
-import 'esm-env';
-const log = import.meta.env.DEV ? console.log : () => { };
+import { writable, get, derived, } from "svelte/store";
+const log = window.debug ? console.log : () => { };
 export class Provider {
     static providerName;
     subscribe;
@@ -10,11 +9,14 @@ export class Provider {
     reliesOn;
     unsubs = [];
     debounce;
-    instanceKey = '';
+    instanceKey = "";
     promiseImpl;
     initial;
     isDirty = false;
     doAbort = false;
+    hasRun = false;
+    subSubscriber;
+    keepAlive = false;
     get promise() {
         return new Promise((resolve, reject) => {
             let unsub;
@@ -23,12 +25,12 @@ export class Provider {
                 if (this.isAncestorDirty()) {
                     return;
                 }
-                if (v && v !== this.initial) {
+                if (this.hasRun) {
                     if (unsub) {
                         unsub();
                         errorSub();
                     }
-                    log('resolving promise');
+                    log("resolving promise");
                     resolve(v);
                     return;
                 }
@@ -42,14 +44,14 @@ export class Provider {
                         errorSub();
                         unsub();
                     }
-                    log('rejecting promise');
+                    log("rejecting promise");
                     reject(v);
                 }
             });
         });
     }
     constructor(initial, ...reliesOn) {
-        log('creating new');
+        log("creating new");
         this.initial = initial;
         this.reliesOn = reliesOn;
         let isInitial = true;
@@ -84,7 +86,9 @@ export class Provider {
                 }
                 this.unsubs = [];
                 // remove myself from the instances
-                // Provider.instances.delete(this.instanceKey);
+                if (!this.keepAlive) {
+                    Provider.queueForDelete(this);
+                }
             };
         });
         this.subscribe = (run) => {
@@ -123,6 +127,11 @@ export class Provider {
     }
     // shared across all providers
     static instances = new Map();
+    static queueForDelete(provider) {
+        // TODO: on page nav, we will lose providers
+        // unless keep alive is on
+        Provider.instances.delete(provider.instanceKey);
+    }
     static getInstance(...args) {
         // prepend key with name of the class
         // if using minification, better to use `providerName`
@@ -141,7 +150,7 @@ export class Provider {
         return new Proxy(this, {
             apply(target, thisArg, args) {
                 return target.getInstance(...args);
-            }
+            },
         });
     }
     async refresh() {
@@ -152,6 +161,8 @@ export class Provider {
     }
     async refreshImpl() {
         this.doAbort = false;
+        this.subSubscriber?.();
+        this.subSubscriber = undefined;
         log(`resfreshing ${this.instanceKey}`);
         try {
             let deps = [];
@@ -173,19 +184,40 @@ export class Provider {
                 // we were invalidated while building
                 return this.refreshImpl();
             }
-            const val = await this.build(...deps);
-            if (this.doAbort) {
-                // we need to rebuild
-                // we were invalidated while building
-                return this.refreshImpl();
+            const buildResult = this.build(...deps);
+            // if not readable
+            if (!buildResult.subscribe) {
+                const val = await buildResult;
+                if (this.doAbort) {
+                    // we need to rebuild
+                    // we were invalidated while building
+                    return this.refreshImpl();
+                }
+                this.isDirty = false;
+                this.hasRun = true;
+                this.store.set(val);
+                return val;
             }
-            this.isDirty = false;
-            this.store.set(val);
-            return val;
+            // its returning a store, so subscribe to that
+            // and return our first value for backwards compatibility
+            const asStore = buildResult;
+            let hasGotValue = false;
+            return new Promise((resolve) => {
+                this.subSubscriber = asStore.subscribe((val) => {
+                    if (!hasGotValue) {
+                        this.isDirty = false;
+                        this.hasRun = true;
+                        hasGotValue = true;
+                        resolve(val);
+                    }
+                    this.store.set(val);
+                });
+            });
         }
         catch (ex) {
             log(`failed to refresh ${this.instanceKey}`);
             this.isDirty = false;
+            this.hasRun = true;
             this.error.set(ex);
             this.store.set(null);
             return Promise.reject(ex);

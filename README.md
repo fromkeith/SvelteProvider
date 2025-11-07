@@ -78,10 +78,6 @@ class AccountIsOldPlanProvider extends Provider<boolean> {
 }
 ```
 
-# Lazy load
-
-Everything is lazy loaded, taking advantage of Svelte Stores
-first subscriber functionality.
 
 # Parameterized loading
 
@@ -90,11 +86,16 @@ Here we take two parameters, one of type string, the other number.
 
 ```
 class AccountIsOldPlanProvider extends Provider<boolean, [string, number]> {
+    private hello: string;
+    private world: number;
     constructor(hello: string, world: number) {
         // we can now access hello + world!
         super(false, accountProvider());
+        this.hello = hello;
+        this.world = world;
     }
     protected async build(account: IAccountAccount): Promise<boolean> {
+        console.log(this.hello, this.world);
         if ((account.plan?.products?.length ?? 0) > 0) {
             return true
         }
@@ -129,9 +130,63 @@ public logout() {
 ```
 
 
+# Using Stores
+
+Instead of a Promise, you can return a Readable, allowing you to stream updates from a store.
+
+```
+import { type Readable} from 'svelte/store';
+class AccountIsOldPlanProvider extends Provider<boolean> {
+    // if using minification, you need to set `providerName`
+    public static providerName: string = 'AccountIsOldPlanProvider';
+    constructor() {
+        super(false, accountProvider());
+    }
+    protected async build(account: IAccountAccount): Readable<boolean> {
+        return writer(false, (set) => {
+            // got subscriber
+            setTimeout(() => {
+              set(true);
+            }, 1000);
+            return () => {
+              // no longer subbed
+            };
+        });
+    }
+}
+```
+
+
+# Lazy load
+
+Everything is lazy loaded, taking advantage of Svelte Stores
+first subscriber functionality. Stores are automatically destroyed when no longer subscribed to.
+To prevent this, you can use the `keepAlive` option.
+
+
+# Quirks
+
+- If you watch `$isLoading` in the html before the `$provider` itself.. it may never load as its not being subscribed to.
+
+eg.
+```
+$: provider = myProvider();
+$: isLoading = provider.isLoading;
+
+// this may cause issues as $provider might not get subbed to
+{#if $isLoading && $provider}
+    <div>Loading...</div>
+{/if}
+```
+
+
+- Look out for minification issues, read above.
+
+
 # Todo/Unknowns
 
 - [ ] No server side testing done
 - [ ] Allow pods to be self deleted when no one listening
 - [ ] Add examples
 - [ ] Allow graceful error handling, so if a parent fails, the child can catch it
+- [ ] Better cleanup on page navigation
