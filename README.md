@@ -2,7 +2,13 @@
 
 > A [Riverpod](https://riverpod.dev/docs/introduction/why_riverpod) (from Flutter) inspired state management library for Svelte.
 
-Providers are lazy-loaded, singleton, reactive data sources. They support dependency injection, automatic invalidation, and both Promise and Readable return types. Works with Svelte 5 runes.
+SvelteProvider is a Svelte store with the annoying parts handled:
+
+- Loading & error state is built in, no boilerplate
+- Singletons shared across every component and page, lazy-loaded on first use
+- Providers that depend on other providers re-fetch automatically when upstream data changes
+- Automatic cleanup of instance when no longer used
+- Bbusiness logic grouped together in pods, rather than scattered across components/pages
 
 ---
 
