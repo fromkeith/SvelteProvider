@@ -104,30 +104,31 @@ export const postProvider = providerFamily<Post>((postId: string) =>
 
 ---
 
-## Side effects — exported functions
+## Side effects — actions
 
-Pass an actions object as the second argument to colocate methods directly on the provider instance. Each method is called with `this` bound to the provider, giving access to `getState()`, `setState()`, and `invalidate()`.
+Pass an object with a `build` method and any number of action methods to colocate data fetching and mutations in one place. Each method has `this` automatically bound to the provider instance, giving access to `setState()`, `invalidate()`, `promise`, and `subscribe`.
 
 ```ts
 // pods/cart.ts
 import { provider } from 'svelteprovider';
+import { get } from 'svelte/store';
 
-export const cartProvider = provider(
-    async (): Promise<CartItem[]> => fetchCart(),
-    {
-        async addItem(item: CartItem) {
-            const current = this.getState() ?? [];
-            await this.setState([...current, item]);
-        },
-        async removeItem(id: string) {
-            const current = this.getState() ?? [];
-            await this.setState(current.filter(i => i.id !== id));
-        },
-        async refresh() {
-            return this.invalidate();
-        },
+export const cartProvider = provider({
+    async build(): Promise<CartItem[]> {
+        return fetchCart();
     },
-);
+    async addItem(item: CartItem) {
+        const current = get(this) ?? [];
+        await this.setState([...current, item]);
+    },
+    async removeItem(id: string) {
+        const current = get(this) ?? [];
+        await this.setState(current.filter(i => i.id !== id));
+    },
+    async refresh() {
+        return this.invalidate();
+    },
+});
 ```
 
 ```svelte
@@ -143,7 +144,31 @@ export const cartProvider = provider(
 <button onclick={() => cart.addItem({ id: '1', name: 'Widget' })}>Add item</button>
 ```
 
-`setState()` accepts a plain value or a `Promise`. `getState()` returns the current value synchronously, or `null` if the provider hasn't resolved yet.
+`setState()` accepts a plain value or a `Promise`. `get(this)` returns the current value synchronously from the svelte store, or `null` if the provider hasn't resolved yet.
+
+---
+
+## Actions with dependencies
+
+Combine dependencies and actions in the same object. The `build` method receives the resolved dependency values as arguments.
+
+```ts
+import { provider } from 'svelteprovider';
+import { accountProvider } from './account';
+import { get } from 'svelte/store';
+
+export const userPostsProvider = provider(
+    [accountProvider],
+    {
+        async build(account: IAccount) {
+            return fetch(`/api/users/${account.id}/posts`).then(r => r.json());
+        },
+        async refresh() {
+            return this.invalidate();
+        },
+    },
+);
+```
 
 ---
 
