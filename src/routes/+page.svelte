@@ -12,8 +12,8 @@
 </div>
 
 <div class="card">
-  <strong>providerFamily(fn)</strong> — one cached instance per unique argument set
-  <br /><a href="/family">→ Family example</a>
+  <strong>paramProvider(factory)</strong> — reactive parameter, single provider reruns on change
+  <br /><a href="/family">→ paramProvider example</a>
 </div>
 
 <div class="card">

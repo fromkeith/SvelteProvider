@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { writable, get } from "svelte/store";
-import { Provider, provider, providerFamily } from "../lib/index.js";
+import { Provider, provider, paramProvider } from "../lib/index.js";
+import type { Readable } from "svelte/store";
 
 vi.mock("../lib/log.js", () => ({ log: console.log }));
 
@@ -148,29 +149,44 @@ describe("provider() — with deps", () => {
 });
 
 // ---------------------------------------------------------------------------
-// providerFamily()
+// paramProvider()
 // ---------------------------------------------------------------------------
 
-describe("providerFamily()", () => {
-  it("resolves with the correct value for each arg", async () => {
-    const pf = providerFamily(async (id: number) => id * 3);
-    expect(await pf(5).promise).toBe(15);
-    expect(await pf(7).promise).toBe(21);
+describe("paramProvider()", () => {
+  it("resolves with the correct initial value", async () => {
+    const pp = paramProvider((id: Readable<number>) =>
+      provider([id], (n) => Promise.resolve(n * 3)),
+    );
+    expect(await pp(5).promise).toBe(15);
   });
 
-  it("returns the same instance for identical args", () => {
-    const pf = providerFamily(async (id: number) => id);
-    expect(pf(1)).toBe(pf(1));
+  it("always returns the same singleton instance regardless of arg", () => {
+    const pp = paramProvider((id: Readable<number>) =>
+      provider([id], (n) => Promise.resolve(n)),
+    );
+    expect(pp(1)).toBe(pp(2));
   });
 
-  it("returns different instances for different args", () => {
-    const pf = providerFamily(async (id: number) => id);
-    expect(pf(1)).not.toBe(pf(2));
+  it("reruns when called with a new arg value", async () => {
+    const pp = paramProvider((id: Readable<number>) =>
+      provider([id], (n) => Promise.resolve(n * 10)),
+    );
+    const instance = pp(1);
+    const { values, unsub } = collect<number | null>(instance);
+    await instance.promise;
+    expect(values).toContain(10);
+
+    pp(2);
+    await instance.promise;
+    unsub();
+    expect(values).toContain(20);
   });
 
-  it("supports multi-arg families", async () => {
-    const pf = providerFamily(async (a: number, b: number) => a + b);
-    expect(await pf(3, 4).promise).toBe(7);
+  it("supports multiple args", async () => {
+    const pp = paramProvider((a: Readable<number>, b: Readable<number>) =>
+      provider([a, b], (x, y) => Promise.resolve(x + y)),
+    );
+    expect(await pp(3, 4).promise).toBe(7);
   });
 });
 

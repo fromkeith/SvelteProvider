@@ -80,15 +80,18 @@ When `accountProvider` emits a new value, `userPostsProvider` is automatically i
 
 ---
 
-## Parameterised functional providers
+## Parameterised providers
 
-Use `providerFamily` when the provider needs a runtime argument. Each unique argument combination gets its own cached instance.
+Use `paramProvider` when the provider needs a reactive runtime parameter. The factory receives each parameter as a `Readable<T>` that can be passed directly as a dependency. Calling the returned function with new values updates those stores automatically, causing the provider to re-run.
 
 ```ts
-import { providerFamily } from 'svelteprovider';
+import { paramProvider, provider } from 'svelteprovider';
+import type { Readable } from 'svelte/store';
 
-export const postProvider = providerFamily<Post>((postId: string) =>
-    fetch(`/api/posts/${postId}`).then(r => r.json() as Promise<Post>),
+export const postProvider = paramProvider((postId: Readable<string>) =>
+    provider([postId], (id) =>
+        fetch(`/api/posts/${id}`).then(r => r.json() as Promise<Post>),
+    ),
 );
 ```
 
@@ -98,7 +101,8 @@ export const postProvider = providerFamily<Post>((postId: string) =>
 
     let { postId }: { postId: string } = $props();
 
-    // $derived re-runs when postId changes, picking up the right cached instance
+    // $derived re-calls postProvider when postId changes,
+    // updating the internal store → provider re-fetches automatically
     const post = $derived(postProvider(postId));
 </script>
 
@@ -272,19 +276,22 @@ export const postProvider = PostProvider.create();
 
 ## Returning a Readable (streaming updates)
 
-`build()` can return a `Readable` instead of a `Promise`. The provider forwards every emission as its own value, staying live as long as the store does.
+`build()` can return a `Readable` instead of a `Promise`. The provider forwards every emission as its own value, staying live as long as the store does. When combined with `paramProvider`, the previous stream is torn down and a fresh one is opened whenever the parameter changes.
 
 ```ts
-import { providerFamily } from 'svelteprovider';
+import { paramProvider, provider } from 'svelteprovider';
 import { readable } from 'svelte/store';
+import type { Readable } from 'svelte/store';
 
 // Streams live price updates for a given ticker symbol
-export const priceProvider = providerFamily((ticker: string) =>
-    readable(0, (set) => {
-        const ws = new WebSocket(`wss://prices.example.com/${ticker}`);
-        ws.onmessage = (e) => set(JSON.parse(e.data).price);
-        return () => ws.close();
-    }),
+export const priceProvider = paramProvider((ticker: Readable<string>) =>
+    provider([ticker], (symbol) =>
+        readable(0, (set) => {
+            const ws = new WebSocket(`wss://prices.example.com/${symbol}`);
+            ws.onmessage = (e) => set(JSON.parse(e.data).price);
+            return () => ws.close();
+        }),
+    ),
 );
 ```
 
@@ -326,7 +333,7 @@ Define providers in plain `.ts` modules (called "pods") outside your component f
 src/
   pods/
     user.ts          ← userProvider, userPostsProvider
-    posts.ts         ← postProvider (providerFamily)
+    posts.ts         ← postProvider (paramProvider)
   routes/
     +page.svelte     ← imports from pods, calls the factory
 ```

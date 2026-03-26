@@ -1,7 +1,14 @@
 import { Provider, type ExtractProviderValues } from "./provider";
-import { type Readable } from "svelte/store";
+import { writable, type Readable, type Writable } from "svelte/store";
+import { untrack } from "svelte";
 
 type AnyProvider = Provider<any, any, any>;
+type AnyDep = AnyProvider | Readable<any>;
+
+// Maps a dep array item to its expected input form:
+//   Provider dep  → () => Provider  (factory, existing behaviour)
+//   Readable dep  → Readable        (passed directly)
+type DepInput<D extends AnyDep> = D extends AnyProvider ? () => D : D;
 
 // The `this` context available inside build and action methods.
 // Deliberately narrower than Provider so setState can stay protected on the class.
@@ -52,8 +59,8 @@ export function provider<T>(
  *   async (account) => fetchPostsFor(account.id),
  * );
  */
-export function provider<T, Deps extends AnyProvider[]>(
-  deps: { [K in keyof Deps]: () => Deps[K] },
+export function provider<T, Deps extends AnyDep[]>(
+  deps: { [K in keyof Deps]: DepInput<Deps[K]> },
   fn: (...args: ExtractProviderValues<Deps>) => Promise<T> | Readable<T>,
 ): () => Provider<T, [], Deps>;
 
@@ -71,8 +78,8 @@ export function provider<T, Deps extends AnyProvider[]>(
  *   },
  * );
  */
-export function provider<T, Deps extends AnyProvider[], A extends ActionMap>(
-  deps: { [K in keyof Deps]: () => Deps[K] },
+export function provider<T, Deps extends AnyDep[], A extends ActionMap>(
+  deps: { [K in keyof Deps]: DepInput<Deps[K]> },
   obj: BuildAndActions<T, ExtractProviderValues<Deps>> &
     A &
     ThisType<ActionThis<T>>,
@@ -140,14 +147,15 @@ export function provider<T>(
   }
 
   // Cases 2 & 3: deps array + (fn | object)
-  const depFactories = fnOrDepsOrObj as (() => AnyProvider)[];
+  const rawDeps = fnOrDepsOrObj as ((() => AnyProvider) | Readable<any>)[];
+  const resolveDeps = () => rawDeps.map((d) => (typeof d === "function" ? d() : d));
 
   if (typeof fnOrObj === "function") {
     // Case 2: deps + build fn
     const buildFn = fnOrObj;
     class FunctionalProviderWithDeps extends Provider<T> {
       constructor() {
-        super(null, ...depFactories.map((f) => f()));
+        super(null, ...resolveDeps());
       }
       protected build(...deps: any[]): Promise<T> | Readable<T> {
         return buildFn(...deps);
@@ -160,7 +168,7 @@ export function provider<T>(
   const { build, ...actions } = fnOrObj as BuildAndActions<T, any[]> & ActionMap;
   class FunctionalProviderWithDepsAndActions extends Provider<T> {
     constructor() {
-      super(null, ...depFactories.map((f) => f()));
+      super(null, ...resolveDeps());
     }
     protected build(...deps: any[]): Promise<T> | Readable<T> {
       return build.call(this, ...deps);
@@ -170,31 +178,40 @@ export function provider<T>(
   return FunctionalProviderWithDepsAndActions.create();
 }
 
+
 /**
- * Creates a parameterised provider. Each unique combination of arguments gets
- * its own cached singleton instance — identical to the class-based
- * `Provider.create()` pattern but without the boilerplate.
+ * Creates a singleton provider whose inputs are reactive. The factory receives
+ * each parameter as a `Readable<T>` so it can be passed directly as a dep.
+ * Calling the returned function again with new values updates the internal
+ * stores, causing the provider to re-run automatically.
  *
  * @example
- * const postProvider = providerFamily((postId: string) =>
- *   fetch(`/api/posts/${postId}`).then(r => r.json()),
+ * // In a module:
+ * export const postProvider = paramProvider((postId: Readable<string>) =>
+ *   provider([postId], (id) => fetch(`/api/posts/${id}`).then(r => r.json())),
  * );
  *
  * // In a component:
+ * let { postId } = $props();
  * const post = $derived(postProvider(postId));
  */
-export function providerFamily<T, Args extends any[]>(
-  fn: (...args: Args) => Promise<T> | Readable<T>,
-): (...args: Args) => Provider<T, Args, []> {
-  class FamilyProvider extends Provider<T, Args, []> {
-    private readonly args: Args;
-    constructor(...args: Args) {
-      super(null);
-      this.args = args;
+export function paramProvider<T, Args extends any[]>(
+  factory: (...params: { [K in keyof Args]: Readable<Args[K]> }) => () => Provider<T>,
+): (...args: Args) => Provider<T> {
+  let instance: Provider<T> | null = null;
+  const stores: Writable<any>[] = [];
+
+  return (...args: Args): Provider<T> => {
+    if (!instance) {
+      const readables = args.map((arg) => {
+        const s = writable(arg);
+        stores.push(s);
+        return s as Readable<any>;
+      });
+      instance = factory(...(readables as unknown as { [K in keyof Args]: Readable<Args[K]> }))();
+    } else {
+      untrack(() => args.forEach((arg, i) => stores[i].set(arg)));
     }
-    protected build(): Promise<T> | Readable<T> {
-      return fn(...this.args);
-    }
-  }
-  return FamilyProvider.create();
+    return instance;
+  };
 }

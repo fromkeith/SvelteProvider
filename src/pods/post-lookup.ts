@@ -1,4 +1,5 @@
-import { providerFamily } from '$lib';
+import { paramProvider, provider } from '$lib';
+import type { Readable } from 'svelte/store';
 
 export interface Post {
   id: number;
@@ -6,9 +7,8 @@ export interface Post {
   body: string;
 }
 
-// One cached Provider instance per unique id — postProvider(1) === postProvider(1)
-// but postProvider(1) !== postProvider(2).
-export const postProvider = providerFamily(async (id: number): Promise<Post> => {
-  const r = await fetch(`https://jsonplaceholder.typicode.com/posts/${id}`);
-  return r.json();
-});
+export const postProvider = paramProvider((id: Readable<number>) =>
+  provider([id], (postId) =>
+    fetch(`https://jsonplaceholder.typicode.com/posts/${postId}`).then(r => r.json()),
+  ),
+);

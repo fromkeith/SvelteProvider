@@ -1,5 +1,6 @@
 import {
   writable,
+  get,
   type Writable,
   type Readable,
   type Subscriber,
@@ -13,12 +14,14 @@ import { getClassId } from "./utils";
 // Shared across all providers
 const instances = new Map<string, any>();
 
-/** Extracts the resolved value type `T` from a `Provider<T, ...>`. */
+/** Extracts the resolved value type `T` from a `Provider<T, ...>` or `Readable<T>`. */
 export type ExtractProviderValue<P> =
-  P extends Provider<infer T, any, any> ? T : never;
+  P extends Provider<infer T, any, any> ? T :
+  P extends Readable<infer T> ? T :
+  never;
 
-/** Maps a tuple of Provider types to a tuple of their resolved value types. */
-export type ExtractProviderValues<Deps extends Provider<any, any, any>[]> = {
+/** Maps a tuple of Provider or Readable types to a tuple of their resolved value types. */
+export type ExtractProviderValues<Deps extends (Provider<any, any, any> | Readable<any>)[]> = {
   [K in keyof Deps]: ExtractProviderValue<Deps[K]>;
 };
 
@@ -71,7 +74,7 @@ export type ExtractProviderValues<Deps extends Provider<any, any, any>[]> = {
 export abstract class Provider<
   T,
   Args extends any[] = [],
-  Deps extends Provider<any, any, any>[] = Provider<any, any, any>[],
+  Deps extends (Provider<any, any, any> | Readable<any>)[] = (Provider<any, any, any> | Readable<any>)[],
 > implements Readable<T> {
   // providerName is kept for backwards compatibility but no longer required
   public static providerName?: string;
@@ -98,7 +101,7 @@ export abstract class Provider<
   public error: Writable<any | null>;
 
   private store: Writable<T | null>;
-  private reliesOn: Provider<any, any, any>[];
+  private reliesOn: (Provider<any, any, any> | Readable<any>)[];
   private unsubs: Unsubscriber[] = [];
   private instanceKey: string = "";
   private promiseImpl?: Promise<T | null>;
@@ -187,23 +190,29 @@ export abstract class Provider<
         }
         isInitial = false;
         for (const p of this.reliesOn) {
-          const k = p;
-          this.unsubs.push(
-            p.subscribe(() => {
-              if (k.isDirty) return;
-              log(`${k.instanceKey} updated, so ${this.instanceKey} is dirty`);
-              this.markDirty();
-            }),
-          );
-          // Subscribe to the internal _error store to avoid a recursive
-          // activation loop through the public error wrapper.
-          this.unsubs.push(
-            p._error.subscribe(() => {
-              if (k.isDirty) return;
-              log(`${k.instanceKey} failed, so ${this.instanceKey} is dirty`);
-              this.markDirty();
-            }),
-          );
+          if (p instanceof Provider) {
+            const k = p;
+            this.unsubs.push(
+              p.subscribe(() => {
+                if (k.isDirty) return;
+                log(`${k.instanceKey} updated, so ${this.instanceKey} is dirty`);
+                this.markDirty();
+              }),
+            );
+            // Subscribe to the internal _error store to avoid a recursive
+            // activation loop through the public error wrapper.
+            this.unsubs.push(
+              p._error.subscribe(() => {
+                if (k.isDirty) return;
+                log(`${k.instanceKey} failed, so ${this.instanceKey} is dirty`);
+                this.markDirty();
+              }),
+            );
+          } else {
+            // Plain Readable dep — mark dirty on every emission, including the
+            // initial one, so the first subscriber triggers a build.
+            this.unsubs.push(p.subscribe(() => this.markDirty()));
+          }
         }
 
         return () => {
@@ -269,7 +278,7 @@ export abstract class Provider<
       return true;
     }
     for (const p of this.reliesOn) {
-      if (p.isAncestorDirty()) {
+      if (p instanceof Provider && p.isAncestorDirty()) {
         return true;
       }
     }
@@ -364,16 +373,20 @@ export abstract class Provider<
         if (this.doAbort) {
           return this.refreshImpl();
         }
-        if (p.promiseImpl != undefined) {
-          log(
-            `--wait other: ${this.instanceKey} asking for ${p.instanceKey}'s promise`,
-          );
-          deps.push(await p.promiseImpl);
+        if (p instanceof Provider) {
+          if (p.promiseImpl != undefined) {
+            log(
+              `--wait other: ${this.instanceKey} asking for ${p.instanceKey}'s promise`,
+            );
+            deps.push(await p.promiseImpl);
+          } else {
+            log(
+              `--refresh other: ${this.instanceKey} asking for ${p.instanceKey}`,
+            );
+            deps.push(await p.promise);
+          }
         } else {
-          log(
-            `--refresh other: ${this.instanceKey} asking for ${p.instanceKey}`,
-          );
-          deps.push(await p.promise);
+          deps.push(get(p));
         }
       }
       if (this.doAbort) {
